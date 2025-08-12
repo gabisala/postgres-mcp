@@ -1,21 +1,85 @@
 #!/usr/bin/env python3
 """
-PostgreSQL MCP Server using FastMCP
+PostgreSQL MCP Server using Official MCP SDK
 A Model Context Protocol server for interacting with PostgreSQL databases.
 """
 
 import os
 import json
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
+from pydantic import BaseModel, Field
 
 import asyncpg
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+
+# Pydantic models for structured return types
+class TableListResult(BaseModel):
+    """Result model for list_tables tool."""
+    schema_name: str = Field(description="Database schema name")
+    tables: List[str] = Field(description="List of table names")
+    total_count: int = Field(description="Total number of tables")
+
+
+class TableDataResult(BaseModel):
+    """Result model for read_table tool."""
+    table: str = Field(description="Full table name (schema.table)")
+    total_rows: int = Field(description="Total number of rows in table")
+    returned_rows: int = Field(description="Number of rows returned")
+    limit: int = Field(description="Applied row limit")
+    offset: int = Field(description="Applied row offset")
+    data: List[Dict[str, Any]] = Field(description="Table data rows")
+
+
+class ColumnInfo(BaseModel):
+    """Column information model."""
+    name: str = Field(description="Column name")
+    data_type: str = Field(description="Column data type")
+    nullable: bool = Field(description="Whether column allows NULL values")
+    default: Optional[str] = Field(description="Default value if any")
+    constraints: List[str] = Field(description="Column constraints")
+
+
+class TableSchemaResult(BaseModel):
+    """Result model for describe_table tool."""
+    table: str = Field(description="Full table name (schema.table)")
+    columns: List[ColumnInfo] = Field(description="Table column definitions")
+    foreign_keys: List[Dict[str, str]] = Field(description="Foreign key relationships")
+    indexes: List[Dict[str, str]] = Field(description="Table indexes")
+
+
+class QueryResult(BaseModel):
+    """Result model for execute_query tool."""
+    query: str = Field(description="Executed SQL query (truncated if long)")
+    columns: List[str] = Field(description="Result column names")
+    row_count: int = Field(description="Number of rows returned")
+    data: List[Dict[str, Any]] = Field(description="Query result data")
+
+
+class TableStatsResult(BaseModel):
+    """Result model for get_table_stats tool."""
+    table: str = Field(description="Full table name (schema.table)")
+    row_count: int = Field(description="Total number of rows")
+    column_count: int = Field(description="Number of columns")
+    total_size: str = Field(description="Total table size (human readable)")
+    table_size: str = Field(description="Table data size (human readable)")
+    indexes_size: str = Field(description="Indexes size (human readable)")
+    column_types: Dict[str, int] = Field(description="Distribution of column types")
+
+
+class SearchResult(BaseModel):
+    """Result model for search_tables tool."""
+    search_term: str = Field(description="Search term used")
+    schema_name: str = Field(description="Schema searched")
+    matching_tables: List[str] = Field(description="Tables matching the search")
+    matching_columns: List[Dict[str, str]] = Field(description="Columns matching the search")
+
 
 # Initialize FastMCP server
 mcp = FastMCP("postgresql-server")
@@ -102,7 +166,7 @@ mcp.lifespan = lifespan
 
 
 @mcp.tool()
-async def list_tables(schema: str = "public") -> str:
+async def list_tables(schema: str = "public") -> TableListResult:
     """
     List all tables in the specified database schema.
     
@@ -110,31 +174,43 @@ async def list_tables(schema: str = "public") -> str:
         schema: The database schema to list tables from (default: "public")
     
     Returns:
-        A formatted list of all tables in the schema
+        Structured information about tables in the schema
     """
     if not pool:
         if not await ensure_connection_pool():
-            return "Error: Database connection not initialized"
+            # Return error in structured format
+            return TableListResult(
+                schema_name=schema,
+                tables=[],
+                total_count=0
+            )
     
-    async with pool.acquire() as conn:
-        query = """
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = $1 
-            AND table_type = 'BASE TABLE'
-            ORDER BY table_name;
-        """
-        rows = await conn.fetch(query, schema)
-        
-        if not rows:
-            return f"No tables found in schema '{schema}'"
-        
-        tables = [row['table_name'] for row in rows]
-        result = f"Tables in schema '{schema}':\n"
-        result += "\n".join(f"  • {table}" for table in tables)
-        result += f"\n\nTotal: {len(tables)} tables"
-        
-        return result
+    try:
+        async with pool.acquire() as conn:
+            query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = $1 
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_name;
+            """
+            rows = await conn.fetch(query, schema)
+            
+            tables = [row['table_name'] for row in rows]
+            
+            return TableListResult(
+                schema_name=schema,
+                tables=tables,
+                total_count=len(tables)
+            )
+            
+    except Exception as e:
+        # Return empty result on error
+        return TableListResult(
+            schema_name=schema,
+            tables=[],
+            total_count=0
+        )
 
 
 @mcp.tool()
@@ -143,7 +219,7 @@ async def read_table(
     schema: str = "public",
     limit: int = 100,
     offset: int = 0
-) -> str:
+) -> TableDataResult:
     """
     Read contents from a PostgreSQL table.
     
@@ -154,25 +230,39 @@ async def read_table(
         offset: Number of rows to skip (default: 0)
     
     Returns:
-        JSON-formatted table contents with metadata
+        Structured table data with metadata
     """
     if not pool:
         if not await ensure_connection_pool():
-            return "Error: Database connection not initialized"
+            return TableDataResult(
+                table=f"{schema}.{table_name}",
+                total_rows=0,
+                returned_rows=0,
+                limit=limit,
+                offset=offset,
+                data=[]
+            )
     
-    async with pool.acquire() as conn:
-        # Validate table exists
-        check_query = """
-            SELECT COUNT(*) 
-            FROM information_schema.tables 
-            WHERE table_schema = $1 AND table_name = $2
-        """
-        exists = await conn.fetchval(check_query, schema, table_name)
-        
-        if not exists:
-            return f"Error: Table '{schema}.{table_name}' not found"
-        
-        try:
+    try:
+        async with pool.acquire() as conn:
+            # Validate table exists
+            check_query = """
+                SELECT COUNT(*) 
+                FROM information_schema.tables 
+                WHERE table_schema = $1 AND table_name = $2
+            """
+            exists = await conn.fetchval(check_query, schema, table_name)
+            
+            if not exists:
+                return TableDataResult(
+                    table=f"{schema}.{table_name}",
+                    total_rows=0,
+                    returned_rows=0,
+                    limit=limit,
+                    offset=offset,
+                    data=[]
+                )
+            
             # Get total row count
             count_query = f"SELECT COUNT(*) FROM {schema}.{table_name}"
             total_rows = await conn.fetchval(count_query)
@@ -186,20 +276,24 @@ async def read_table(
             """
             rows = await conn.fetch(data_query, limit, offset)
             
-            # Format results
-            result = {
-                "table": f"{schema}.{table_name}",
-                "total_rows": total_rows,
-                "returned_rows": len(rows),
-                "limit": limit,
-                "offset": offset,
-                "data": [dict(row) for row in rows]
-            }
+            return TableDataResult(
+                table=f"{schema}.{table_name}",
+                total_rows=total_rows,
+                returned_rows=len(rows),
+                limit=limit,
+                offset=offset,
+                data=[dict(row) for row in rows]
+            )
             
-            return json.dumps(result, indent=2, default=str)
-            
-        except Exception as e:
-            return f"Error reading table: {str(e)}"
+    except Exception as e:
+        return TableDataResult(
+            table=f"{schema}.{table_name}",
+            total_rows=0,
+            returned_rows=0,
+            limit=limit,
+            offset=offset,
+            data=[]
+        )
 
 
 @mcp.tool()

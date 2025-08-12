@@ -35,16 +35,30 @@ SYSTEM_PROMPT = """You are a helpful database assistant that helps users query a
 You have access to the following MCP tools:
 
 1. list_tables(schema="public") - Lists all tables in the database
-2. describe_table(table_name, schema="public") - Shows the schema/structure of a table
-3. read_table(table_name, schema="public", limit=100, offset=0) - Reads data from a table
-4. search_tables(search_term, schema="public") - Searches for tables/columns by name
+2. describe_table(table_name, schema="public") - Shows the schema/structure of a table  
+3. read_table(table_name, schema="public", limit=100, offset=0) - Reads actual data from a table
+4. search_tables(search_term, schema="public") - Searches for tables/columns by name (metadata only)
 5. get_table_stats(table_name, schema="public") - Gets statistics about a table
 6. execute_query(query, limit=100) - Executes a SELECT SQL query
+
+**Tool Selection Guidelines:**
+- When user asks "what tables..." or "list tables" → use list_tables()
+- When user asks "show me records/data from [table]" or "all records for [table]" → use read_table(table_name="[table]")  
+- When user asks "structure/schema/columns of [table]" → use describe_table(table_name="[table]")
+- When user asks "find tables containing [term]" → use search_tables(search_term="[term]")
+- When user asks "statistics/size/count for [table]" → use get_table_stats(table_name="[table]")
+- For complex SQL queries → use execute_query(query="SELECT ...")
+
+**Response Formatting:**
+- Always provide natural language explanations, not raw JSON
+- When showing table lists, format as: "Your database contains X tables: table1, table2, table3..."
+- When showing data, explain what you're showing: "Here are the records from the [table] table:"
+- Use friendly, conversational language
 
 Based on the user's request, determine which tool(s) to call and with what parameters.
 Respond with a JSON object containing:
 {
-    "thoughts": "Your reasoning about what the user wants",
+    "thoughts": "Your reasoning about what the user wants and which tool to use",
     "tools_to_call": [
         {
             "tool": "tool_name",
@@ -54,14 +68,14 @@ Respond with a JSON object containing:
             }
         }
     ],
-    "response_type": "text|dataframe|mixed",
-    "user_facing_message": "What you'll tell the user before showing results"
+    "response_type": "text|dataframe|mixed", 
+    "user_facing_message": "Natural language explanation of what you're about to show them"
 }
 
 Important:
 - Only suggest SELECT queries for execute_query, never UPDATE/DELETE/DROP
 - Default to "public" schema unless specified
-- Be helpful and explain what you're doing
+- Always explain what you're doing in friendly language
 - If the user's request is unclear, ask for clarification
 - Table and column names are case-sensitive
 """
@@ -113,7 +127,7 @@ class OpenAIMCPAssistant:
             
             # Get GPT-4o response
             response = openai_client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5-2025-08-07",
                 messages=messages,
                 temperature=0.1,  # Low temperature for consistency
                 response_format={"type": "json_object"}
@@ -174,11 +188,27 @@ class OpenAIMCPAssistant:
         # Handle single result
         if len(results) == 1:
             result = results[0]
+            tool_name = result["tool"]
             
-            # Try to parse as JSON for DataFrames
+            # Try to parse as JSON and format based on tool type
             try:
                 data = json.loads(result["result"])
-                if isinstance(data, dict) and "data" in data and data["data"]:
+                
+                # Handle list_tables response
+                if tool_name == "list_tables" and isinstance(data, dict) and "tables" in data:
+                    if data["tables"]:
+                        table_list = ", ".join(data["tables"])
+                        formatted_message = f"Your database contains {data['total_count']} tables: {table_list}"
+                    else:
+                        formatted_message = f"No tables found in schema '{data.get('schema_name', 'public')}'"
+                    
+                    return {
+                        "type": "text",
+                        "content": f"{message}\n\n{formatted_message}"
+                    }
+                
+                # Handle read_table response (data with rows)
+                elif isinstance(data, dict) and "data" in data and data["data"]:
                     df = pd.DataFrame(data["data"])
                     return {
                         "type": "dataframe",
@@ -191,10 +221,31 @@ class OpenAIMCPAssistant:
                             "query": data.get("query")
                         }
                     }
+                
+                # Handle execute_query response (structured query results)
+                elif isinstance(data, dict) and "row_count" in data and "data" in data:
+                    if data["data"]:
+                        df = pd.DataFrame(data["data"])
+                        return {
+                            "type": "dataframe", 
+                            "message": message,
+                            "content": df,
+                            "metadata": {
+                                "query": data.get("query"),
+                                "row_count": data.get("row_count"),
+                                "columns": data.get("columns")
+                            }
+                        }
+                    else:
+                        return {
+                            "type": "text",
+                            "content": f"{message}\n\nQuery executed successfully but returned no results."
+                        }
+                
             except (json.JSONDecodeError, KeyError):
                 pass
             
-            # Return as text
+            # Return raw result as text (for describe_table, get_table_stats, search_tables)
             return {
                 "type": "text",
                 "content": f"{message}\n\n{result['result']}"
@@ -243,16 +294,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.messages.append({
         "role": "assistant",
-        "content": """👋 Hello! I'm your AI-powered database assistant using GPT-4o.
-        
-I can help you explore and query your PostgreSQL database using natural language. Try asking:
-- "What tables are in my database?"
-- "Show me the structure of the users table"
-- "Get me 10 recent orders"
-- "How many products have a price over $50?"
-- "Find all tables that have an email column"
-
-I'll understand your intent and execute the appropriate database operations!"""
+        "content": """👋 Hello! I'm your AI-powered database assistant using GPT-4o."""
     })
 
 if "assistant" not in st.session_state:
@@ -350,7 +392,7 @@ with chat_container:
                         csv,
                         "query_results.csv",
                         "text/csv",
-                        key=f"download_{len(st.session_state.messages)}"
+                        key=f"download_msg_{st.session_state.messages.index(message)}"
                     )
                     
                 elif msg_type == "mixed":
@@ -399,7 +441,7 @@ if "example" in st.session_state:
                 st.dataframe(df, use_container_width=True)
                 
                 csv = df.to_csv(index=False)
-                st.download_button("📥 Download CSV", csv, "results.csv", "text/csv")
+                st.download_button("📥 Download CSV", csv, "results.csv", "text/csv", key="download_example")
                 
             elif response["type"] == "mixed":
                 st.write(response["content"])
@@ -452,7 +494,7 @@ if prompt := st.chat_input("Ask anything about your database..."):
                     st.dataframe(df, use_container_width=True)
                     
                     csv = df.to_csv(index=False)
-                    st.download_button("📥 Download CSV", csv, "results.csv", "text/csv")
+                    st.download_button("📥 Download CSV", csv, "results.csv", "text/csv", key="download_prompt")
                     
                 elif response["type"] == "mixed":
                     st.write(response["content"])

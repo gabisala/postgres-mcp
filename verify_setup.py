@@ -48,8 +48,7 @@ packages = {
     "streamlit": "Web interface",
     "pandas": "Data handling",
     "openai": "GPT-4o integration",
-    "mcp": "MCP protocol",
-    "fastmcp": "FastMCP server",
+    "mcp": "Official MCP SDK",
     "asyncpg": "PostgreSQL async driver",
     "dotenv": "Environment variables"
 }
@@ -163,7 +162,7 @@ if all_good:
 else:
     print("❌ Some issues need to be fixed:")
     print("\n1. Install missing packages:")
-    print("   pip install streamlit pandas openai mcp fastmcp asyncpg python-dotenv")
+    print("   uv sync  # or pip install streamlit pandas openai mcp asyncpg python-dotenv")
     print("\n2. Create/update your .env file with:")
     print("   PGHOST=localhost")
     print("   PGPORT=5432")
