@@ -18,37 +18,237 @@ This is a PostgreSQL MCP (Model Context Protocol) server that enables AI assista
 - **Streamlit chat interface** (`streamlit_openai_mcp.py`) - OpenAI GPT-4o powered web UI for database interaction
 - **CMDB example setup** - Complete Configuration Management Database with sample data
 
-## Commands
+## Development Environment
 
-### Development Setup
+### Package Management with uv
+
+This project uses **uv** as the primary package manager for fast, reliable dependency management, with pip as fallback support.
+
+#### Why uv?
+- **Speed**: 10-100x faster than pip for dependency resolution and installation
+- **Reliability**: Better dependency resolution with conflict detection
+- **Modern**: Written in Rust, actively maintained by Astral
+- **Compatibility**: Drop-in replacement for pip with additional features
+
+### Environment Setup Methods
+
+#### Method 1: Using uv (Recommended)
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-# OR using uv
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install dependencies in one step
 uv sync
 
-# Set up PostgreSQL and CMDB (WSL2)
+# This automatically:
+# - Creates .venv/ directory if it doesn't exist
+# - Installs Python 3.12 if needed (specified in .python-version)
+# - Installs all dependencies from pyproject.toml and uv.lock
+# - Activates the virtual environment
+```
+
+#### Method 2: Using traditional pip + venv
+```bash
+# Create virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate     # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+#### Method 3: Using uv with explicit venv management
+```bash
+# Create virtual environment with uv
+uv venv .venv
+
+# Activate virtual environment
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate     # Windows
+
+# Install dependencies with uv
+uv pip install -r requirements.txt
+```
+
+### Package Management Commands
+
+#### Using uv (Preferred)
+```bash
+# Install dependencies from pyproject.toml/uv.lock
+uv sync
+
+# Add new dependency
+uv add package-name
+uv add --dev package-name  # Development dependency
+
+# Remove dependency
+uv remove package-name
+
+# Update dependencies
+uv sync --upgrade
+
+# Install specific package version
+uv add "package-name==1.2.3"
+
+# Run commands in the virtual environment
+uv run python script.py
+uv run streamlit run streamlit_openai_mcp.py
+
+# Show installed packages
+uv pip list
+
+# Generate requirements.txt for compatibility
+uv pip freeze > requirements.txt
+```
+
+#### Using pip (Fallback)
+```bash
+# Activate virtual environment first
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Add new dependency
+pip install package-name
+echo "package-name" >> requirements.txt
+
+# Upgrade dependencies
+pip install --upgrade -r requirements.txt
+
+# Show installed packages
+pip list
+```
+
+### Development Workflow
+
+#### Initial Project Setup
+```bash
+# 1. Clone repository
+git clone https://github.com/gabisala/postgres-mcp.git
+cd postgres-mcp
+
+# 2. Setup environment with uv (creates .venv automatically)
+uv sync
+
+# 3. Copy environment template
+cp .env.template .env
+
+# 4. Edit .env with your configuration
+nano .env  # Add your OpenAI API key
+
+# 5. Set up PostgreSQL and CMDB (WSL2/Ubuntu)
 chmod +x setup_postgresql_wsl.sh
 ./setup_postgresql_wsl.sh
 
-# Verify setup
-python verify_setup.py
-
-# Load sample CMDB data
-psql -U mcp_user -h localhost -d cmdb -f create_cmdb_database.sql
-psql -U mcp_user -h localhost -d cmdb -f insert_sample_data.sql
+# 6. Verify setup
+uv run python verify_setup.py
 ```
 
-### Running the Applications
+#### Daily Development Commands
 ```bash
-# Run the Streamlit chat interface
+# Activate environment (if using manual venv)
+source .venv/bin/activate
+
+# Start development server
+uv run streamlit run streamlit_openai_mcp.py
+# OR with activated venv:
 streamlit run streamlit_openai_mcp.py
 
 # Test MCP server directly
-python postgres_mcp_server.py
+uv run python postgres_mcp_server.py
+
+# Run database tests
+uv run python test_cmdb_queries.py
+
+# Install new package during development
+uv add new-package
+git add pyproject.toml uv.lock  # Commit both files
+```
+
+### Virtual Environment Management
+
+#### Understanding .venv Directory
+```bash
+# The .venv directory structure:
+.venv/
+├── bin/                    # Executables (Linux/macOS)
+│   ├── activate           # Environment activation script  
+│   ├── python            # Python interpreter
+│   └── streamlit         # Installed packages
+├── lib/python3.12/        # Python packages
+└── pyvenv.cfg            # Virtual environment config
+
+# On Windows:
+.venv/Scripts/activate.bat  # Activation script location
+```
+
+#### Environment Activation Best Practices
+```bash
+# Check if environment is active
+echo $VIRTUAL_ENV  # Should show path to .venv
+
+# Using uv (handles activation automatically)
+uv run <command>           # Runs command in venv without activation
+
+# Manual activation when needed
+source .venv/bin/activate  # Linux/macOS
+deactivate                 # Exit virtual environment
+
+# Verify correct Python/packages are being used
+which python              # Should point to .venv/bin/python
+which streamlit           # Should point to .venv/bin/streamlit
+python -c "import sys; print(sys.path[0])"  # Check Python path
+```
+
+#### Dependency Files and Lock Management
+```bash
+# Project uses multiple dependency files:
+pyproject.toml            # Main project configuration (uv format)
+uv.lock                   # Exact dependency versions (like package-lock.json)
+requirements.txt          # pip-compatible format (for fallback)
+.python-version          # Specifies Python 3.12 requirement
+
+# When adding dependencies with uv:
+uv add package-name       # Updates both pyproject.toml and uv.lock
+git add pyproject.toml uv.lock  # Always commit both files
+
+# When someone else adds dependencies:
+uv sync                   # Installs exact versions from uv.lock
+```
+
+### Running the Applications
+
+#### Using uv (Recommended - handles venv automatically)
+```bash
+# Run the Streamlit chat interface
+uv run streamlit run streamlit_openai_mcp.py
+
+# Test MCP server directly  
+uv run python postgres_mcp_server.py
 
 # Test CMDB with sample queries
+uv run python test_cmdb_queries.py
+
+# Run any Python script
+uv run python script_name.py
+```
+
+#### Using activated virtual environment
+```bash
+# Activate environment first
+source .venv/bin/activate
+
+# Then run applications normally
+streamlit run streamlit_openai_mcp.py
+python postgres_mcp_server.py
 python test_cmdb_queries.py
+
+# Deactivate when done
+deactivate
 ```
 
 ### Database Operations
@@ -59,6 +259,101 @@ psql -U mcp_user -h localhost -d cmdb
 # Start/stop PostgreSQL (WSL2)
 sudo service postgresql start
 sudo service postgresql stop
+
+# Check PostgreSQL status
+sudo service postgresql status
+```
+
+### Development Environment Troubleshooting
+
+#### Common Issues and Solutions
+```bash
+# Issue: "Command not found" errors
+# Solution: Make sure virtual environment is activated or use uv run
+source .venv/bin/activate
+# OR
+uv run <command>
+
+# Issue: Import errors for installed packages
+# Solution: Verify you're using the correct Python interpreter
+which python  # Should show .venv/bin/python
+uv run which python
+
+# Issue: Different package versions than expected
+# Solution: Sync to locked versions
+uv sync  # Installs exact versions from uv.lock
+
+# Issue: Environment conflicts or corruption
+# Solution: Recreate virtual environment
+rm -rf .venv
+uv sync  # Recreates .venv and installs dependencies
+
+# Issue: uv command not found
+# Solution: Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc  # Or restart terminal
+```
+
+#### Environment Health Checks
+```bash
+# Verify environment setup
+uv run python -c "
+import sys
+print(f'Python: {sys.executable}')
+print(f'Version: {sys.version}')
+print(f'Path: {sys.path[0]}')
+
+# Check key packages
+try:
+    import streamlit, asyncpg, openai, fastmcp
+    print('✅ All key packages imported successfully')
+except ImportError as e:
+    print(f'❌ Import error: {e}')
+"
+
+# Check uv environment status
+uv pip list | head -10  # Show installed packages
+ls -la .venv/           # Verify .venv directory structure
+```
+
+### Development Best Practices
+
+#### Environment Management Rules
+1. **Always use uv for dependency management** - Faster and more reliable than pip
+2. **Use `uv run` for executing scripts** - Automatically handles virtual environment
+3. **Commit both pyproject.toml and uv.lock** - Ensures reproducible builds
+4. **Never commit .venv directory** - It's already in .gitignore
+5. **Use .env.template for configuration examples** - Never commit actual .env files
+
+#### IDE/Editor Setup
+```bash
+# VS Code workspace settings (.vscode/settings.json)
+{
+    "python.interpreter.path": "./.venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "python.defaultInterpreterPath": "./.venv/bin/python"
+}
+
+# PyCharm: Set Project Interpreter to .venv/bin/python
+# Vim/Neovim: Add to .vimrc or init.lua
+# let g:python3_host_prog = './.venv/bin/python'
+```
+
+#### Git Workflow with uv
+```bash
+# Adding new dependencies
+uv add package-name                    # Add to pyproject.toml and uv.lock
+git add pyproject.toml uv.lock        # Stage both files
+git commit -m "Add package-name dependency"
+
+# After pulling changes with new dependencies
+git pull
+uv sync                               # Install any new dependencies
+
+# Updating all dependencies
+uv sync --upgrade                     # Update to latest compatible versions
+git add uv.lock                      # Commit the updated lock file
+git commit -m "Update dependencies"
 ```
 
 ## Architecture
