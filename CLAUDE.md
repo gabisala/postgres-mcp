@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository Information
+
+**GitHub Repository**: https://github.com/gabisala/postgres-mcp
+- **Owner**: gabisala
+- **Repository Name**: postgres-mcp
+- **Default Branch**: master
+- **Access**: Public repository for collaborative development
+
 ## Project Overview
 
 This is a PostgreSQL MCP (Model Context Protocol) server that enables AI assistants to interact with PostgreSQL databases through a standardized interface. The project includes:
@@ -79,6 +87,10 @@ Complete enterprise CMDB with tables:
 
 ## Configuration
 
+### Environment Setup
+1. Copy the environment template: `cp .env.template .env`
+2. Edit `.env` with your actual configuration values
+
 Required environment variables in `.env`:
 ```
 # PostgreSQL Connection
@@ -92,8 +104,11 @@ PGPASSWORD=mcp_password
 DATABASE_URL=postgresql://mcp_user:mcp_password@localhost:5432/cmdb
 
 # OpenAI API (for chat interface)
-OPENAI_API_KEY=sk-your-key-here
+OPENAI_API_KEY=sk-your-actual-openai-api-key
+OPENAI_MODEL=gpt-4o
 ```
+
+**Note**: The `.env` file is excluded from version control for security. Use `.env.template` as your starting point.
 
 ## Key Patterns
 
