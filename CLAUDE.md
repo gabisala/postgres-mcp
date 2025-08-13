@@ -398,10 +398,49 @@ PGPASSWORD=mcp_password
 # Alternative connection string format
 DATABASE_URL=postgresql://mcp_user:mcp_password@localhost:5432/cmdb
 
-# OpenAI API (for chat interface)
-OPENAI_API_KEY=sk-your-actual-openai-api-key
+# AI Model Provider Selection
+# Choose between "openai" (openai.com) or "azure" (Azure OpenAI)
+AI_PROVIDER=openai
+
+# OpenAI.com Configuration
+OPENAI_API_KEY=sk-your-openai-api-key-here
 OPENAI_MODEL=gpt-4o
+OPENAI_BASE_URL=https://api.openai.com/v1
+
+# Azure OpenAI Configuration
+AZURE_OPENAI_API_KEY=your-azure-openai-api-key-here
+AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-10-21
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_MODEL=gpt-4o
 ```
+
+### AI Model Provider Configuration
+
+The application supports two AI providers that can be switched dynamically:
+
+#### 1. OpenAI (openai.com)
+Set `AI_PROVIDER=openai` to use OpenAI's direct API:
+- **OPENAI_API_KEY**: Your OpenAI API key from openai.com
+- **OPENAI_MODEL**: Model name (e.g., `gpt-4o`, `gpt-4-turbo`)
+- **OPENAI_BASE_URL**: OpenAI API endpoint (defaults to `https://api.openai.com/v1`)
+
+#### 2. Azure OpenAI
+Set `AI_PROVIDER=azure` to use Azure-hosted OpenAI models:
+- **AZURE_OPENAI_API_KEY**: Your Azure OpenAI resource API key
+- **AZURE_OPENAI_ENDPOINT**: Your Azure OpenAI resource endpoint URL
+- **AZURE_OPENAI_API_VERSION**: API version (recommended: `2024-10-21`)
+- **AZURE_OPENAI_DEPLOYMENT_NAME**: Your model deployment name in Azure
+- **AZURE_OPENAI_MODEL**: The underlying model (for reference)
+
+#### Configuration-Based Switching
+AI provider selection is controlled entirely through configuration:
+1. **Edit your `.env` file** to set `AI_PROVIDER=openai` or `AI_PROVIDER=azure`
+2. **Restart the Streamlit application** for changes to take effect
+3. The sidebar displays the current provider and configuration status
+4. Both providers use the same MCP integration and database tools
+
+**No UI toggles** - Provider switching is intentionally configuration-only to prevent runtime changes and ensure consistent behavior across sessions.
 
 **Note**: The `.env` file is excluded from version control for security. Use `.env.template` as your starting point.
 

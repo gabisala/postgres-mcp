@@ -12,7 +12,7 @@ import sys
 from typing import Dict, Any, List
 import pandas as pd
 from datetime import datetime
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from dotenv import load_dotenv
@@ -27,8 +27,52 @@ st.set_page_config(
     layout="wide"
 )
 
+def create_openai_client():
+    """Create OpenAI client based on AI_PROVIDER configuration."""
+    provider = os.getenv("AI_PROVIDER", "openai").lower()
+    
+    if provider == "azure":
+        # Azure OpenAI configuration
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+        
+        if not azure_endpoint or not azure_api_key:
+            st.error("❌ Azure OpenAI configuration incomplete. Please check AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY")
+            return None
+            
+        return AzureOpenAI(
+            api_key=azure_api_key,
+            api_version=azure_api_version,
+            azure_endpoint=azure_endpoint
+        )
+    else:
+        # Standard OpenAI configuration
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        
+        if not openai_api_key:
+            st.error("❌ OpenAI API key not found. Please set OPENAI_API_KEY")
+            return None
+            
+        return OpenAI(
+            api_key=openai_api_key,
+            base_url=openai_base_url
+        )
+
+def get_model_name():
+    """Get the appropriate model name based on AI_PROVIDER."""
+    provider = os.getenv("AI_PROVIDER", "openai").lower()
+    
+    if provider == "azure":
+        # For Azure OpenAI, use deployment name
+        return os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+    else:
+        # For OpenAI.com, use model name
+        return os.getenv("OPENAI_MODEL", "gpt-4o")
+
 # Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai_client = create_openai_client()
 
 # System prompt for GPT-4o
 SYSTEM_PROMPT = """You are a helpful database assistant that helps users query a PostgreSQL database.
@@ -125,9 +169,17 @@ class OpenAIMCPAssistant:
             # Add current message
             messages.append({"role": "user", "content": user_message})
             
-            # Get GPT-4o response
+            # Get AI response with dynamic model selection
+            if not openai_client:
+                return {
+                    "thoughts": "OpenAI client not initialized",
+                    "tools_to_call": [],
+                    "response_type": "text", 
+                    "user_facing_message": "AI client is not properly configured. Please check your API credentials."
+                }
+                
             response = openai_client.chat.completions.create(
-                model="gpt-5-2025-08-07",
+                model=get_model_name(),
                 messages=messages,
                 temperature=0.1,  # Low temperature for consistency
                 response_format={"type": "json_object"}
@@ -303,22 +355,49 @@ if "assistant" not in st.session_state:
 
 # Main UI
 st.title("🤖 AI Database Assistant")
-st.caption("Powered by OpenAI GPT-4o and PostgreSQL MCP Server")
+provider_options = {"openai": "OpenAI (openai.com)", "azure": "Azure OpenAI"}
+current_provider_display = provider_options.get(os.getenv("AI_PROVIDER", "openai").lower(), "OpenAI")
+st.caption(f"Powered by {current_provider_display} and PostgreSQL MCP Server")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # API Key check
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        st.success("✅ OpenAI API Key configured")
+    # AI Provider status (read-only display)
+    st.subheader("🤖 AI Provider")
+    current_provider = os.getenv("AI_PROVIDER", "openai").lower()
+    provider_display = provider_options.get(current_provider, "Unknown Provider")
+    
+    # Show current provider as info box
+    st.info(f"**Current Provider:** {provider_display}")
+    st.caption("💡 To switch providers, update `AI_PROVIDER` in your .env file")
+    
+    # Show provider-specific configuration
+    if current_provider == "azure":
+        st.info("🔵 **Azure OpenAI Configuration**")
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY") 
+        azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+        
+        if azure_endpoint and azure_api_key and azure_deployment:
+            st.success("✅ Azure OpenAI configured")
+            st.caption(f"**Endpoint:** {azure_endpoint}")
+            st.caption(f"**Deployment:** {azure_deployment}")
+        else:
+            st.error("❌ Azure OpenAI configuration incomplete")
+            st.caption("Please configure AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_DEPLOYMENT_NAME in your .env file")
+            
     else:
-        api_key = st.text_input("OpenAI API Key", type="password")
+        # OpenAI.com configuration
+        api_key = os.getenv("OPENAI_API_KEY")
+        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        
         if api_key:
-            os.environ["OPENAI_API_KEY"] = api_key
-            openai_client.api_key = api_key
-            st.rerun()
+            st.success("✅ OpenAI configured")
+            st.caption(f"**Model:** {model}")
+        else:
+            st.error("❌ OpenAI configuration incomplete")
+            st.caption("Please configure OPENAI_API_KEY in your .env file")
     
     # Database info
     st.divider()
@@ -333,8 +412,9 @@ with st.sidebar:
     
     # Model settings
     st.divider()
-    st.header("🧠 AI Model")
-    st.info("Using: **GPT-4o**")
+    st.header("🧠 Current Model")
+    current_model = get_model_name()
+    st.info(f"**{provider_display}**\nModel: `{current_model}`")
     
     # Example queries
     st.divider()
@@ -457,9 +537,13 @@ if "example" in st.session_state:
 
 # Chat input
 if prompt := st.chat_input("Ask anything about your database..."):
-    # Check for API key
-    if not os.getenv("OPENAI_API_KEY"):
-        st.error("Please configure your OpenAI API key in the sidebar first!")
+    # Check for properly configured client
+    if not openai_client:
+        provider = os.getenv("AI_PROVIDER", "openai").lower()
+        if provider == "azure":
+            st.error("Please configure your Azure OpenAI credentials in the sidebar first!")
+        else:
+            st.error("Please configure your OpenAI API key in the sidebar first!")
     else:
         # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})

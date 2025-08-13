@@ -7,6 +7,7 @@ A Model Context Protocol server for interacting with PostgreSQL databases.
 import os
 import json
 import asyncio
+import argparse
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
@@ -17,6 +18,89 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+
+def get_database_config() -> Dict[str, str]:
+    """
+    Get database configuration based on DB_PROFILE setting.
+    Supports 'local' and 'external' profiles.
+    
+    Returns:
+        Dictionary with database connection parameters
+    """
+    profile = os.getenv('DB_PROFILE', 'local').lower()
+    
+    if profile == 'external':
+        # Try external-specific environment variables first
+        host = os.getenv('EXTERNAL_PGHOST')
+        port = os.getenv('EXTERNAL_PGPORT', '5432')
+        database = os.getenv('EXTERNAL_PGDATABASE')
+        user = os.getenv('EXTERNAL_PGUSER')
+        password = os.getenv('EXTERNAL_PGPASSWORD')
+        db_url = os.getenv('EXTERNAL_DATABASE_URL')
+        
+        if not db_url and all([host, database, user]):
+            db_url = f"postgresql://{user}:{password or ''}@{host}:{port}/{database}"
+        
+        if db_url:
+            print(f"Using external database profile: {host or 'from_url'}")
+            return {
+                'profile': 'external',
+                'DATABASE_URL': db_url,
+                'host': host or 'from_url',
+                'port': port,
+                'database': database,
+                'user': user,
+                'password': password
+            }
+        else:
+            print("Warning: External profile selected but configuration incomplete, falling back to legacy variables")
+    
+    # Use local profile or fallback to legacy environment variables
+    if profile == 'local':
+        # Try local-specific environment variables first
+        host = os.getenv('LOCAL_PGHOST', 'localhost')
+        port = os.getenv('LOCAL_PGPORT', '5432')
+        database = os.getenv('LOCAL_PGDATABASE', 'cmdb')
+        user = os.getenv('LOCAL_PGUSER', 'mcp_user')
+        password = os.getenv('LOCAL_PGPASSWORD', '')
+        db_url = os.getenv('LOCAL_DATABASE_URL')
+        
+        if not db_url:
+            db_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        
+        print(f"Using local database profile: {host}:{port}/{database}")
+        return {
+            'profile': 'local',
+            'DATABASE_URL': db_url,
+            'host': host,
+            'port': port,
+            'database': database,
+            'user': user,
+            'password': password
+        }
+    
+    # Fallback to legacy environment variables
+    host = os.getenv('PGHOST', 'localhost')
+    port = os.getenv('PGPORT', '5432')
+    database = os.getenv('PGDATABASE', 'postgres')
+    user = os.getenv('PGUSER', 'postgres')
+    password = os.getenv('PGPASSWORD', '')
+    db_url = os.getenv('DATABASE_URL')
+    
+    if not db_url:
+        db_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    
+    print(f"Using legacy database configuration: {host}:{port}/{database}")
+    return {
+        'profile': 'legacy',
+        'DATABASE_URL': db_url,
+        'host': host,
+        'port': port,
+        'database': database,
+        'user': user,
+        'password': password
+    }
 
 
 # Pydantic models for structured return types
@@ -97,17 +181,12 @@ async def ensure_connection_pool() -> bool:
     if pool:
         return True
 
-    db_url = os.getenv('DATABASE_URL')
+    db_config = get_database_config()
+    db_url = db_config.get('DATABASE_URL')
 
     if not db_url:
-        # Build from individual components
-        host = os.getenv('PGHOST', 'localhost')
-        port = os.getenv('PGPORT', '5432')
-        database = os.getenv('PGDATABASE', 'postgres')
-        user = os.getenv('PGUSER', 'postgres')
-        password = os.getenv('PGPASSWORD', '')
-
-        db_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        print("Error: No database URL could be constructed from configuration")
+        return False
 
     try:
         pool = await asyncpg.create_pool(
@@ -129,17 +208,12 @@ async def lifespan(server):
     global pool
     
     # Startup: Create connection pool
-    db_url = os.getenv('DATABASE_URL')
+    db_config = get_database_config()
+    db_url = db_config.get('DATABASE_URL')
     
     if not db_url:
-        # Build from individual components
-        host = os.getenv('PGHOST', 'localhost')
-        port = os.getenv('PGPORT', '5432')
-        database = os.getenv('PGDATABASE', 'postgres')
-        user = os.getenv('PGUSER', 'postgres')
-        password = os.getenv('PGPASSWORD', '')
-        
-        db_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        print("Error: No database URL could be constructed from configuration")
+        raise ValueError("Database configuration incomplete")
     
     try:
         pool = await asyncpg.create_pool(
@@ -630,16 +704,52 @@ def main():
     """Run the PostgreSQL MCP server."""
     import sys
     
-    # Check if we have a database configuration
-    if not any([
-        os.getenv('DATABASE_URL'),
-        all([os.getenv('PGHOST'), os.getenv('PGDATABASE')])
-    ]):
-        print("Error: Database configuration not found!", file=sys.stderr)
-        print("Please set either DATABASE_URL or PGHOST/PGDATABASE/etc. environment variables", file=sys.stderr)
+    parser = argparse.ArgumentParser(description='PostgreSQL MCP Server')
+    parser.add_argument(
+        '--profile', 
+        choices=['local', 'external'], 
+        help='Database profile to use (overrides DB_PROFILE env var)'
+    )
+    parser.add_argument(
+        '--info', 
+        action='store_true',
+        help='Show configuration information and exit'
+    )
+    
+    args = parser.parse_args()
+    
+    # Override DB_PROFILE if specified via command line
+    if args.profile:
+        os.environ['DB_PROFILE'] = args.profile
+    
+    # Validate database configuration
+    try:
+        db_config = get_database_config()
+        if not db_config.get('DATABASE_URL'):
+            print("Error: Database configuration incomplete!", file=sys.stderr)
+            print("Please configure your database settings in .env file", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error: Database configuration error: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Run the FastMCP server
+    # Print configuration info
+    profile = os.getenv('DB_PROFILE', 'local')
+    print(f"Starting PostgreSQL MCP Server")
+    print(f"Database profile: {profile} ({db_config.get('profile', 'unknown')})")
+    print(f"Host: {db_config['host']}:{db_config['port']}")
+    print(f"Database: {db_config['database']}")
+    print(f"Transport: stdio (MCP protocol)")
+    
+    if args.info:
+        print("\nConfiguration Details:")
+        print(f"  DATABASE_URL: {db_config['DATABASE_URL'][:50]}...")
+        print(f"  Profile: {db_config.get('profile', 'unknown')}")
+        return
+    
+    print("\nServer ready for MCP connections...")
+    
+    # Run the FastMCP server (always uses stdio for MCP protocol)
     mcp.run()
 
 
